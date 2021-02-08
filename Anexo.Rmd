@@ -1,0 +1,273 @@
+---
+title: "Anexo"
+author: "Luis Miguel Domínguez Pérez"
+date: "7/2/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+```{r Parámetros iniciales, include = FALSE}
+setwd("C:/Users/luismiguel.dominguez/Escritorio/Tarea_mod_pred")
+source("C:/Users/luismiguel.dominguez/Escritorio/Tarea_mod_pred/Funciones_R.R")
+datos <- readRDS('C:/Users/luismiguel.dominguez/Escritorio/Tarea_mod_pred/Rad2018.RDS')
+```
+
+
+```{r Carga de librerías, include = FALSE}
+library(ggpubr)
+library(psych)
+library(corrplot)
+library(mice)
+library(questionr)
+library(caret)
+library(lmSupport)
+```
+
+
+```{r A Factor, include = FALSE}
+datos$PicoRad <- as.factor(datos$PicoRad)
+str(datos)
+```
+
+```{r Únicos en numéricos., include = FALSE}
+sapply(datos[, 2:12],function(x) length(unique(x)))
+```
+
+```{r Resumen de variables numéricas, include = FALSE}
+summary(Filter(is.numeric, datos))
+```
+
+```{r Resumen de variables categóricas, include = FALSE}
+summary(Filter(is.factor, datos))
+```
+
+```{r Inspección fechas, include = FALSE}
+summary(datos$Fecha)
+print(paste("El número de fechas diferentes es:", length(unique(datos$Fecha))))
+print(paste("El número total de fechas es:", length(datos$Fecha)))
+```
+
+## Figura 1:
+
+Análisis de gráficos de densidad y boxplot de las variables cuantitativas iniciales.
+
+
+```{r Plots cuantitativas., echo = TRUE}
+par(mfrow=c(1,2))
+for(i in (colnames(Filter(is.numeric, datos)))){
+  dens <- density(na.omit(datos[[i]]))
+  plot(dens, main = paste("Densidad para ", i), col = "steelblue")
+    polygon(dens, col = "steelblue")
+  box <- boxplot(datos[i], main = paste("Boxplot para ", i), col = "Orange")
+}
+```
+
+```{r Asignaciones, include = FALSE}
+targetCont<-datos$TD
+targetBin<-datos$PicoRad
+input<-as.data.frame(datos[,-c(1,2,13)])
+colnames(input)
+str(input)
+```
+ 
+```{r Inspección temporal, include = FALSE}
+par(mfrow=c(2,1))
+plot(datos$Fecha, datos$TD, type = "S", xlab = "Fecha", ylab = "TD")
+plot(datos$Fecha, datos$PicoRad)
+``` 
+ 
+```{r Añadimos derivadas de fecha., include=FALSE}
+input$mes <- as.factor(format(datos$Fecha,"%m"))
+input$día <- as.factor(format(datos$Fecha, "%d"))
+input$hora <- as.factor(format(datos$Fecha, "%H"))
+input$semana <- as.factor(format(datos$Fecha, "%W"))
+str(input)
+``` 
+
+```{r Inspección Fechas., include = FALSE}
+par(mfrow=c(2,2))
+   plot(input$mes, targetCont, main = "mes vs TD")
+   plot(input$mes, targetBin, main = "mes vs PicoRad")
+   plot(input$día, targetCont, main = "día vs TD")
+   plot(input$día, targetBin, main = "día vs PicoRad")
+   plot(input$hora, targetCont, main = "hora vs TD")
+   plot(input$hora, targetBin, main = "hora vs PicoRad")
+   plot(input$semana, targetCont, main = "semana vs TD")
+   plot(input$semana, targetBin, main = "semana vs PicoRad")
+``` 
+
+```{r Missings., include = FALSE}
+sapply(Filter(is.numeric, input),function(x) atipicosAmissing(x)[[2]])/nrow(input)
+``` 
+
+```{r Filtrado NAs excesivos., include = FALSE}
+input$prop_missings<-apply(is.na(input),1,mean) #is.na(input) devuelve una máscara con true o
+# false en función de si el registro de esa fila es nulo o no. Los nulos son verdadero y compu
+#tan como valor 1. Calculando la media de cada secuencia de TRUE o FALSE sabemos la proporción
+# de datos faltantes de la fila. El apply se encarga de recorrer cada una de las filas del 
+# dataFrame.
+print("Resumen de NA's por fila:")
+summary(input$prop_missings)
+print("Resumen de NA's por variable:")
+(prop_missingsVars<-apply(is.na(input),2,mean))# Funciona de manera similar a la anterior pero recorre columnas en lugar de filas.
+```
+
+```{r Filtrado eliminacion columnas., include = FALSE}
+
+input <- subset(input, prop_missings< 0.5, select=names(prop_missingsVars)[prop_missingsVars<0.5]) # Nos quedamos solo con las filas y 
+# columnas que cumplan las condiciones adecuadas.
+targetBin<-targetBin[input$prop_missings<0.5] 
+targetCont<-targetCont[input$prop_missings<0.5]
+# Con estas dos últimas líneas eliminamos de las variables target que no están presentes en el
+# input las filas correspondientes a las eliminadas anteriormente.
+```
+ 
+```{r Imputación MICE, include = FALSE}
+imputation <- mice(input, m= 1, maxit = 10)
+```
+
+
+## Figura 2.
+
+  Datos imputados vs variable semana.
+  
+```{r imputados vs semana., echo = TRUE}
+
+par(mfrow=c(3,2))
+
+
+xyplot (imputation, Rn~semana, pch = 19, cex = 0.7, main = "Rn vs Semana")
+xyplot (imputation, Desc.Rn~semana, pch = 19, cex = 0.7, main = "Desc.Rn vs Semana")
+xyplot (imputation, Pres~semana, pch = 19, cex = 0.7, main = "Pres vs Semana")
+xyplot (imputation, Temp~semana, pch = 19, cex = 0.7, main = "Temp vs Semana")
+xyplot (imputation, HR~semana, pch = 19, cex = 0.7, main = "HR vs Semana")
+xyplot (imputation, HS~semana, pch = 19, cex = 0.7, main = "HS vs Semana")
+xyplot (imputation, Isolar~semana, pch = 19, cex = 0.7, main = "Isolar vs Semana")
+xyplot (imputation, Vviento~semana, pch = 19, cex = 0.7, main = "Vviento vs Semana")
+xyplot (imputation, Temp.Su~semana, pch = 19, cex = 0.7, main = "Temp vs Semana")
+xyplot (imputation, Lluvia~semana, pch = 19, cex = 0.7, main = "Lluvia vs Semana")
+
+
+```
+
+```{r Ejemplo imputación., include = FALSE}
+xyplot (imputation, Temp~semana, pch = 19, cex = 0.7, main = "Temp vs Semana")
+xyplot (imputation, Rn~hora, pch = 19, cex = 0.7, main = "Rn vs hora")
+```
+
+## Figura 3.
+
+  Datos imputados vs variable hora.
+  
+```{r Imputados vs hora., echo = TRUE}
+
+xyplot (imputation, Rn~hora, pch = 19, cex = 0.7, main = "Rn vs hora")
+xyplot (imputation, Desc.Rn~hora, pch = 19, cex = 0.7, main = "Desc.Rn vs hora")
+xyplot (imputation, Pres~hora, pch = 19, cex = 0.7, main = "Pres vs hora")
+xyplot (imputation, Temp~hora, pch = 19, cex = 0.7, main = "Temp vs hora")
+xyplot (imputation, HR~hora, pch = 19, cex = 0.7, main = "HR vs hora")
+xyplot (imputation, HS~hora, pch = 19, cex = 0.7, main = "HS vs hora")
+xyplot (imputation, Isolar~hora, pch = 19, cex = 0.7, main = "Isolar vs hora")
+xyplot (imputation, Vviento~hora, pch = 19, cex = 0.7, main = "Vviento vs hora")
+xyplot (imputation, Temp.Su~hora, pch = 19, cex = 0.7, main = "Temp vs hora")
+xyplot (imputation, Lluvia~hora, pch = 19, cex = 0.7, main = "Lluvia vs hora")
+
+
+```
+
+```{r Imput media, include = FALSE}
+input_media<-sapply(
+  Filter(is.numeric, input),function(x) ImputacionCuant(x,"media"))
+input_media <- as.data.frame(input_media)
+input_media$mes <- input$mes
+input_media$semana <- input$semana
+input_media$día <- input$día
+input_media$hora <- input$hora
+input_media <- input_media[,-c(11)]
+summary(input_media)
+```
+
+```{r Plot media, include = FALSE}
+   plot(as.numeric(input$semana), input$Temp, col = "black", pch = 1, cex = 1, main  = "Temp")
+   points(input_media$semana,input_media$Temp,  col = "orange", pch = 16, cex = 0.5)
+```
+ 
+## Figura 4.
+
+  Diagramas de dispersión para las variables cuantitativas predictoras y la target cuantitiva "TD".
+  
+```{r Variables predictoras vs target cuantitativo, echo = TRUE}
+par(mfrow=c(1,2))
+for (i in (colnames(input[,-c(11,12,13,14,15)]))){
+  plot( input[[i]],targetCont,
+       pch = 16,
+       main = paste("TD vs ", i),
+       xlab = i,
+       ylab = "TD",
+       col = "steelblue",
+       cex = 0.5)
+  abline(lm(TD~input[[i]], data = datos), col = "orange")
+}
+``` 
+
+## Figura 5.
+
+  Gráficos de rejilla para evaluar los mejores puntos de corte:
+
+```{r gráficos pre modelo reg log, include = FALSE}
+  
+datos<-readRDS("datos_dep")
+targetBin<-datos$targetBin
+
+datos$aleatorio<-runif(nrow(datos))
+datos$aleatorio2<-runif(nrow(datos))
+
+datos$día <- as.numeric(datos$día)
+datos$hora <- as.numeric(datos$hora)
+datos$semana <- as.numeric(datos$semana)
+
+datos$mes<-car::recode(datos$mes, "'02'='03';'06'='05'")
+
+datos <- datos[,-c(2,17,18,19)]
+
+datos_mod<-cbind(datos,Transf_Auto(Filter(is.numeric, datos),targetBin))
+
+set.seed(123456)
+trainIndex <- createDataPartition(datos_mod$targetBin, p=0.8, list=FALSE)
+data_train <- datos_mod[trainIndex,]
+data_test <- datos_mod[-trainIndex,]
+
+modeloDefinitivo_bin = glm(targetBin ~ mes + sqrtxLluvia + raiz4HS + sqrxPres + raiz4Desc.Rn + sqrxTemp.Su + sqrxhora + Rn , family = binomial, data = data_train)
+
+summary(modeloDefinitivo_bin)
+pseudoR2(modeloDefinitivo_bin,data_train,"targetBin")
+pseudoR2(modeloDefinitivo_bin,data_test,"targetBin")
+modeloDefinitivo_bin$rank #nÃºmero de parÃ¡metros
+
+car::vif(modeloDefinitivo_bin)
+```
+
+```{r ploteamos la rejilla modelo reg log, echo=TRUE, warning=FALSE}
+hist_targetbinaria(predict(modeloDefinitivo_bin, newdata=data_test,type="response"),data_test$targetBin,"probabilidad")
+
+
+#sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",0.5,"1")
+#sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",0.75,"1")
+
+## generamos una rejilla de puntos de corte
+posiblesCortes<-seq(0,1,0.01)
+
+rejilla<-data.frame(t(rbind(posiblesCortes,sapply(posiblesCortes,function(x) sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",x,"1")))))
+
+rejilla$Youden<-rejilla$Sensitivity+rejilla$Specificity-1
+plot(rejilla$posiblesCortes,rejilla$Youden)
+plot(rejilla$posiblesCortes,rejilla$Accuracy)
+rejilla$posiblesCortes[which.max(rejilla$Youden)]
+rejilla$posiblesCortes[which.max(rejilla$Accuracy)]
+
+#Los comparamos
+sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",0.3,"1")
+sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",0.31,"1")
+```

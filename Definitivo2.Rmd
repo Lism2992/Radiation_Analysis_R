@@ -1,0 +1,882 @@
+---
+title: "Tarea Modelización Predictiva"
+author: "Luis Miguel Domínguez Pérez"
+date: "7/2/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+## Parámetros inciales.
+
+ Vamos a comenzar el estudio estableciendo el working directory e importando tanto los datos como el código de las funciones que podamos necesitar durante la práctica.
+
+```{r Parámetros iniciales, echo = TRUE}
+setwd("C:/Users/luismiguel.dominguez/Escritorio/Tarea_mod_pred")
+source("C:/Users/luismiguel.dominguez/Escritorio/Tarea_mod_pred/Funciones_R.R")
+datos <- readRDS('C:/Users/luismiguel.dominguez/Escritorio/Tarea_mod_pred/Rad2018.RDS')
+```
+
+## Carga de librerías necesarias.
+
+ A continuación cargamos las librerías que podamos llegar a necesitar durante el análisis. Las utilizadas han sido:
+           ggpubr, psych, corrplot, mice, questionr, caret, pROC y lmSupport.
+
+```{r Carga de librerías,echo = FALSE, message=FALSE}
+library(ggpubr)
+library(psych)
+library(corrplot)
+library(mice)
+library(questionr)
+library(caret)
+library(lmSupport)
+library(pROC)
+```
+
+## Análisis inicial de la estructura de los datos.
+
+ Vamos a comprobar que los tipos de las variables son las indicadas, detectando si alguna de ellas debería ser un factor o hay tipos asignados erróneamente.
+
+```{r Tipos, echo = FALSE, results='hide'}
+str(datos)
+```
+
+El pico de radiación debería ser un factor así que los transformamos.
+
+```{r A Factor, echo = TRUE, results = 'hide'}
+datos$PicoRad <- as.factor(datos$PicoRad)
+str(datos)
+```
+
+Ahora vamos a inspeccionar la variedad de valores en las variables numéricas para ver si tienen una distribución razonable. En caso de que alguna de ellas tenga una distribución que no sea contínua podríamos calificarla como factor.
+
+```{r Únicos en numéricos.}
+sapply(datos[, 2:12],function(x) length(unique(x)))
+```
+
+Ninguna de ellas parece adecuada para recategorizarla como un factor. La que menos niveles tendría sería la referente a las precipitaciones y serían 70, que es excesivo para tratarla como un factor.
+
+Realizamos una primera inspección de las variables numéricas para ver si detectamos algún patrón extraño.
+
+Podemos utilizar la función filter para quedarnos con las numéricas y no tener que introducir los índices manualmente como en el caso anterior.
+
+```{r Resumen de variables numéricas, results = 'hide', echo = TRUE}
+summary(Filter(is.numeric, datos))
+```
+
+Lo primero que nos llama la atención es el elevado número de registros NA presentes. 
+
+TD -> Valores máximos y mínimos razonables, media y mediana muy similares sugiriendo distribución normal.
+
+Rn y Desc.Rn -> Valores mínimos y máximos razonables. Presencia importante de NA's.
+
+Pres y Temp -> Valores razonables pero con presencia de NA's.
+
+HR y HS -> Valores en el dominio [0, 100], que es como debería ser al tratarse de porcentajes.
+También tienen presente un número importante de valores faltantes.
+           
+Isolar -> Presenta valores muy radicales, habrá que inspeccionarla más a fondo para evaluar la presencia o no de outliers. Presencia de NA's.
+
+Vviento -> Parece que hay un valor máximo algo exagerado, habrá que inspeccionarla con más detalle. Presencia de NA's.
+
+Temp.Su -> Los valores parecen dentro de lo normal. Presencia de NA's.
+
+Lluvia -> Seguramente presentará uns distribución algo extrema pero aparte de la presencia de NA's nada más que señalar de momento.
+
+## Inspección de las variables categóricas.
+
+Solo tenemos una variables categórica, que además será la objetivo de la regresión logística, por lo que podemos hacer una inspección del reparto de valores de la siguiente manera:
+
+```{r Resumen de variables categóricas, echo = TRUE}
+summary(Filter(is.factor, datos))
+```
+
+Hay un buen reparto, la proporción del reparto de valores es de 1/3 vs 2/3 que es bastante razonable y al no presentar valroes nulos no parece que esta variable vaya a necesitar ninún tratamiento especial.
+
+## Inspección de la variable Fecha.
+
+Nos queda una variable por inspeccionar, la fecha. Dado su carácter, la inspección más importante que le podemos hacer es ver que no haya repeticiones de registros, es decir, fechas repetidas. Una manera de hacerlo es la siguiente. También podemos ver que no hay datos faltantes de fechas.
+
+```{r Inspección fechas, echo = FALSE}
+summary(datos$Fecha)
+print(paste("El número de fechas diferentes es:", length(unique(datos$Fecha))))
+print(paste("El número total de fechas es:", length(datos$Fecha)))
+```
+
+## Análisis detallado de variables cuantitativas.
+
+Parece que las únicas variables problemáticas detectadas han sido algunas de las numéricas, por lo que vamos a hacer un análisis más detallado de estas mediante boxplots para intentar detectar outliers. Lo haremos comparando gráficos de densidad con sus respectivos boxplots. Mostramos estos resultados en la Figura 1 del Anexo aunque el código fue el siguiente.
+
+
+```{r Plots cuantitativas., echo = TRUE, results='hide', eval = FALSE}
+par(mfrow=c(3,2))
+for(i in (colnames(Filter(is.numeric, datos)))){
+  dens <- density(na.omit(datos[[i]]))
+  plot(dens, main = paste("Densidad para ", i), col = "steelblue")
+    polygon(dens, col = "steelblue")
+  box <- boxplot(datos[i], main = paste("Boxplot para ", i), col = "Orange")
+}
+```
+
+ En mi opinión no hay outliers claramente descartables en ninguna de las variables numéricas.
+ 
+ En algunas como la lluvia o el viento lo que parecen outliers siguen estando dentro de valores que podrían esperarse físicamente (tanto los vientos de más de 150 km/h como las lluvias de 8 l/m**2 son fenómenos que pueden producirse de manera natural) por lo que descartarlos me parecería sesgar arbitrariamente los datos.
+
+ La variable objetivo TD que hace referencia a la "Tasa de Dosis" en microSieverts presenta valores que pueden considerarse como outliers pero al ser escasos y tratarse de la variable objetivo prefiero dejarlos tal y como están.
+
+ En mi opinión, los outliers, salvo que sus valores salgan de dominios de los que no pueden salir físicamente en condiciones normales (por ejemplo un viento de 8000 km/h, un porcentaje negativo o mayor que 100 o una temepratura del suelo de 400 ºC) deben ser conservados y en nuestro caso no hay ninguna variable numérica que presente este tipo de valores extremos claramente descartables.
+ 
+## Separamos las variables objetivo (target) de las predictoras.
+
+ Tenemos dos variables target, "TD" que es cuantitativa e intentaremos predecir mediante una regresión lineal y PicoRad que es una variable dicotómica (factor de dos niveles) cuyo valor aproximaremos mediante una regresión logística.
+ 
+```{r Asignaciones, echo = TRUE, results = 'hide'}
+targetCont<-datos$TD
+targetBin<-datos$PicoRad
+input<-as.data.frame(datos[,-c(1,2,13)])
+colnames(input)
+str(input)
+```
+ 
+## Tratamiento de la variable fecha.
+
+ Para poder utilizar esta variable vamos a estudiar el comportamineto de las variables a predecir con respecto a la variable fecha. Intentaremos ver si existe algún tipo de patrón entre diversas derivadas de la fecha(como el mes del año, el día del mes o la hora del día) e incluirlas en el modelo como variables predictoras. No estamos demasiado interesados en ver la relación de la fecha con el resto de variables predictoras ya que una relación entre ellas sólo nos indicaría que vamos a introducir colinealidad al modelo y esto lo podemos ver por otros métodos (VIF).
+ 
+```{r Inspección temporal.}
+par(mfrow=c(2,1))
+plot(datos$Fecha, datos$TD, type = "S", xlab = "Fecha", ylab = "TD")
+plot(datos$Fecha, datos$PicoRad)
+``` 
+
+ En estas dos anteriores gráficas podemos ver el carácter temporal de las dos variables target. En la primera vemos la relación entre la fecha y la variable "TD" y revela que es más probable encontrar mayores valores de "TD" durante los meses más cálidos del año.La segunda nos revela algo bastante parecido para la variable dicotómica, que es más probable que presente un valor de 1 (es el segundo factor, por eso aparece como 2 en el eje y de la gráfica) durante los meses cálidos. Ahora que está claro que existe una dependencia con la fecha podemos profundizar más en ella.
+ 
+ Vamos a trabajar con tres variables derivadas de la fecha, el mes del año, el día del año y la hora del día. Las vamos a tratar como factores ya que de tratarlas como variables cuantitativas estaríamos cometiendo un error peligroso (no es correcto considerar que, por ejemplo, existe una relación más fuerte entre el mes 9 y el 12 que entre el 12 y el 1, y una variable cuantitativa asume una ordinalidad en los valores aparte de una escala que está lejos de ser real).
+ 
+```{r Añadimos derivadas de fecha., echo = TRUE}
+input$mes <- as.factor(format(datos$Fecha,"%m"))
+input$día <- as.factor(format(datos$Fecha, "%d"))
+input$hora <- as.factor(format(datos$Fecha, "%H"))
+input$semana <- as.factor(format(datos$Fecha, "%W"))
+str(input)
+``` 
+
+Podemos elaborar unos primeros gráficos para evaluar si hay dependencias entre las variables a predecir y estas predictoras derivadas de la fecha.
+
+```{r Inspección Fechas.}
+par(mfrow=c(2,2))
+   plot(input$mes, targetCont, main = "mes vs TD")
+   plot(input$mes, targetBin, main = "mes vs PicoRad")
+   plot(input$día, targetCont, main = "día vs TD")
+   plot(input$día, targetBin, main = "día vs PicoRad")
+   plot(input$hora, targetCont, main = "hora vs TD")
+   plot(input$hora, targetBin, main = "hora vs PicoRad")
+   plot(input$semana, targetCont, main = "semana vs TD")
+   plot(input$semana, targetBin, main = "semana vs PicoRad")
+``` 
+
+ Relación entre targets y mes del año: Vemos que es probable que existe una dependencia de los dos targets con el mes del año. El target cuantitativo presenta medias claramente más altas (sólo hay que fijarse en la anchura de las cajas y la distancia entre las líneas que delimitan las medias para ver que las distribuciones tienen poca superposición) en los meses más cálidos del año y a su vez parece haber muchísima más probabilidad de pico de radiación durante este mismo periodo.
+ 
+ Relación entre targets y día del mes: Por esta parte no parece haber una relación muy clara, si bien es cierto que parece que hay más probabilidad de pico hacia finales de mes no hay una razón fuerte para sospechar. Es de remarcar que físicamente tiene menos sentido que pueda existir una infuencia del día del mes que de las horas del día o del mes del año ya que estas dos últimas van a tener relación con otras variables físicas del modelo como la temperatura o la insolación mientras que el día del mes en un principio no debería presentarlas. Podemos probar esto más adelante viendo las relaciones mutuas entre todas las variables predictoras.
+ 
+ Relación entre targets y hora del día: Es flagrante que existe algún tipo de relación. Las curvas parecen casi definidas por alguna función matemática ondulatoria y las dos variables target vienen a decirnos lo mismo: Existe más actividad (tanto en niveles como picos de radiación) durante las horas nocturnas que las diurnas.
+ 
+ Relación entre targets y semana: Básicamente el resultado es una versión detallada de los resultados que obtuvimos al tratar los meses.
+ 
+## Valores atípicos.
+
+ Ninguna variable tiene un nivel intolerable de valores atípicos.
+
+```{r Missings.}
+sapply(Filter(is.numeric, input),function(x) atipicosAmissing(x)[[2]])/nrow(input)
+``` 
+
+A continuación inspeccionamos el número de missings por variable y por registro (fila). En caso de que en alguna de ellas la proporción superase el 0.5 la eliminamos. Junto a cada línea de código se pueden encontrar detalles sobre el funcionamiento.
+
+```{r Filtrado NAs excesivos.}
+input$prop_missings<-apply(is.na(input),1,mean) #is.na(input) devuelve una máscara con true o
+# false en función de si el registro de esa fila es nulo o no. Los nulos son verdadero y compu
+#tan como valor 1. Calculando la media de cada secuencia de TRUE o FALSE sabemos la proporción
+# de datos faltantes de la fila. El apply se encarga de recorrer cada una de las filas del 
+# dataFrame.
+print("Resumen de NA's por fila:")
+summary(input$prop_missings)
+print("Resumen de NA's por variable:")
+(prop_missingsVars<-apply(is.na(input),2,mean))# Funciona de manera similar a la anterior pero recorre columnas en lugar de filas.
+```
+
+```{r Filtrado eliminacion columnas., echo = FALSE, results='hide'}
+
+input <- subset(input, prop_missings< 0.5, select=names(prop_missingsVars)[prop_missingsVars<0.5]) # Nos quedamos solo con las filas y 
+# columnas que cumplan las condiciones adecuadas.
+targetBin<-targetBin[input$prop_missings<0.5] 
+targetCont<-targetCont[input$prop_missings<0.5]
+# Con estas dos últimas líneas eliminamos de las variables target que no están presentes en el
+# input las filas correspondientes a las eliminadas anteriormente.
+```
+
+## Imputación de variables cuantitativas.
+
+ Tenemos que imputar bastantes valores en variables cuantitativas. No tenemos cualitativas que imputar. Podríamos utilizar imputaciones tradicionales como la media, la mediana o valores aleatorios de la variable. Vamos a intentar antes de nada hacer alguna imputación más lógica utilizando las relaciones entre las variables a imputar y las derivadas de la fecha con el paquete mice.
+ 
+```{r Imputación MICE, results = 'hide', echo = TRUE, warning = FALSE}
+imputation <- mice(input, m= 1, maxit = 10)
+```
+
+Podemos mostrar la bondad de los resultados de este métod de imputación graficando las variables cuantitativas imputadas frente a algunas de las temporales que mejor capturan su carácter. Podemos generar muchos de estos gráfico, a cada cual más interesante pero lamentablemente, debido a la escasez de espacio que tenemos para mostrar resultados nos limitaremos a dos de ellos para mostrar los resultados aunque el resto se muestran en las Figuras 2 y 3 del Anexo:
+
+```{r Ejemplo imputación.}
+xyplot (imputation, Temp~semana, pch = 19, cex = 0.7, main = "Temp vs Semana")
+xyplot (imputation, Rn~hora, pch = 19, cex = 0.7, main = "Rn vs hora")
+```
+
+Al estar los resultados de la imputación (mostrados en rojo) obtenidos a través de las relaciones con el resto de las variables conseguimos una adaptación muy exitosa. Si lo hubiéramos hecho imputando con, por ejemplo, la media, hubiéramos obtenido resultados del siguiente aspecto:
+
+```{r Imput media, include = FALSE}
+input_media<-sapply(
+  Filter(is.numeric, input),function(x) ImputacionCuant(x,"media"))
+input_media <- as.data.frame(input_media)
+input_media$mes <- input$mes
+input_media$semana <- input$semana
+input_media$día <- input$día
+input_media$hora <- input$hora
+input_media <- input_media[,-c(11)]
+summary(input_media)
+```
+
+```{r Plot media, echo = FALSE}
+   plot(as.numeric(input$semana), input$Temp, col = "black", pch = 1, cex = 1, main  = "Temp")
+   points(input_media$semana,input_media$Temp,  col = "orange", pch = 16, cex = 0.5)
+```
+
+Donde la línea horizontal de puntos amarillos sin borde negro representa los datos introducidos al imputar con la media.
+ 
+## Relación entre la variable objetivo cuantitativa y las predictoras numéricas.
+
+  Para finalizar la inspección de los datos antes de montar el modelo de predicción de la variable cuantitativa podemos ver la relación entre las variables regresoras y la variable target cuantitativa. Podemos generar gráficos gráficos para hacernos una idea de cuales van a tener más importancia  la hora de elaborar los modelos de regresión. Mostramos estos gráficos en la Figura 4 del Anexo, pero el código utilizado fue el siguiente.
+  
+```{r Variables predictoras vs target cuantitativo, echo = TRUE, results = 'hide', eval=FALSE}
+par(mfrow=c(3,2))
+for (i in (colnames(input[,-c(11,12,13,14,15)]))){
+  plot( input[[i]],targetCont,
+       pch = 16,
+       main = paste("TD vs ", i),
+       xlab = i,
+       ylab = "TD",
+       col = "steelblue",
+       cex = 0.5)
+  abline(lm(TD~input[[i]], data = datos), col = "orange")
+}
+``` 
+
+## Regresión lineal manual:
+
+Comenzamos insertando dos variables aleatorias en el input que marcarán el punto de corte a partir del cual las variables no son significativas para nuestro modelo.
+
+```{r Cargamos lmm, echo=TRUE, results = 'hide'}
+datos<-readRDS("datos_dep")
+targetCont<-datos$targetCont
+targetBin<-datos$targetBin
+input<-datos[,-c(1,2,17)]
+input$aleatorio<-runif(nrow(input))
+input$aleatorio2<-runif(nrow(input))
+summary(input)
+```
+
+Inspeccionamos la correlación entre variables y la importancia que tendrán a la hora de realizar un modelo.
+
+```{r Inspección, echo=TRUE, warning = FALSE}
+par(mfrow=c(1,2))
+graficoVcramer(input,targetCont)
+corrplot(cor(cbind(targetCont,Filter(is.numeric, input)), use="pairwise", method="pearson"), method = "circle",type = "upper")
+```
+
+Comenzamos con la regresión lineal sin variables modificadas. PAra ello partimos nuestro dataset en train y test. En input figuran las variables regresoras y targetCont es la variable TD a predecir.
+
+```{r Separamos, echo=TRUE, results = 'hide'}
+todo<-data.frame(input,targetCont)
+set.seed(123456)
+trainIndex <- createDataPartition(todo$targetCont, p=0.8, list=FALSE)
+data_train <- todo[trainIndex,]
+data_test <- todo[-trainIndex,]
+```
+
+## Elaboración del modelo manual.
+
+A continuación vamos a elaborar varios modelos tanteando y jugando con la importancia de las variables, tras ello los compararemos, en cuanto a capacidad de predicción como en complejidad ya que si tienen demasiados parámetros no nos interesarán.
+
+```{r mod1, echo=FALSE, results = 'hide', warning=FALSE}
+modelo1<-lm(targetCont~semana+mes+HS+HR+Temp.Su+Rn+Desc.Rn+hora+Vviento+Pres,data=data_train)
+summary(modelo1)
+Rsq(modelo1,"targetCont",data_train)
+Rsq(modelo1,"targetCont",data_test)
+```
+
+```{r mod2, echo=FALSE, results = 'hide', warning=FALSE}
+modelo2<-lm(targetCont~semana+mes+HR+HS+Temp+Rn+Desc.Rn+hora+Vviento+Pres,data=data_train)
+summary(modelo2)
+Rsq(modelo2,"targetCont",data_train)
+Rsq(modelo2,"targetCont",data_test)
+```
+
+```{r mod3, echo=FALSE, results = 'hide', warning=FALSE}
+modelo3<-lm(targetCont~mes+HR+HS+Temp+Rn+Desc.Rn+hora+Vviento+Pres,data=data_train)
+summary(modelo3)
+Rsq(modelo3,"targetCont",data_train)
+Rsq(modelo3,"targetCont",data_test)
+```
+
+```{r mod4, echo=FALSE, results = 'hide', warning=FALSE}
+modelo4<-lm(targetCont~semana+HR+HS+Temp+Rn+Desc.Rn+hora+Vviento+Pres,data=data_train)
+summary(modelo4)
+Rsq(modelo4,"targetCont",data_train)
+Rsq(modelo4,"targetCont",data_test)
+```
+
+```{r mod5, echo=FALSE, results = 'hide', warning=FALSE}
+modelo5<-lm(targetCont~mes+HS+Temp.Su+Rn+Desc.Rn+Vviento+Pres+Lluvia+as.numeric(hora),data=data_train)
+summary(modelo5)
+Rsq(modelo5,"targetCont",data_train)
+Rsq(modelo5,"targetCont",data_test)
+```
+
+```{r Comparamos modelos, echo=FALSE, warning=FALSE}
+modelo1VC <- train(formula(modelo1),
+                   data = todo,method = "lm",
+                   trControl = trainControl(method="repeatedcv", number=5, repeats=20, returnResamp="all")
+)
+modelo2VC <- train(formula(modelo2),
+                   data = todo,method = "lm",
+                   trControl = trainControl(method="repeatedcv", number=5, repeats=20, returnResamp="all")
+)
+modelo3VC <- train(formula(modelo3),
+                   data = todo,method = "lm",
+                   trControl = trainControl(method="repeatedcv", number=5, repeats=20, returnResamp="all")
+)
+modelo4VC <- train(formula(modelo4),
+                   data = todo,method = "lm",
+                   trControl = trainControl(method="repeatedcv", number=5, repeats=20, returnResamp="all")
+)
+modelo5VC <- train(formula(modelo5),
+                   data = todo,method = "lm",
+                   trControl = trainControl(method="repeatedcv", number=5, repeats=20, returnResamp="all")
+)
+results<-data.frame(rbind(modelo1VC$resample,modelo2VC$resample,modelo3VC$resample,modelo4VC$resample, modelo5VC$resample),modelo=c(rep(1,100),rep(2,100),rep(3,100),rep(4,100),rep(5,100)))
+boxplot(Rsquared~modelo,data=results)
+aggregate(Rsquared~modelo, data = results, mean) 
+aggregate(Rsquared~modelo, data = results, sd) 
+
+length(coef(modelo1));length(coef(modelo2));length(coef(modelo3));length(coef(modelo4));length(coef(modelo5))
+                                                                         
+```
+
+De momento, el mejor modelo manual parece el quinto, con solo 20 parámetros consigue un ajuste bastante bueno, pero vamos a hacerle algunos cambios para remodelar niveles del factor poco significativos y evitar colinealidad.
+
+```{r mod5re, echo=TRUE, results = 'hide'}
+modeloManual<-lm(targetCont~mes+HS+Temp.Su+Rn+Desc.Rn+Vviento+Pres+Lluvia+as.numeric(hora),data=data_train)
+```
+
+Si añadiéramos la variable temperatura aparte de la del suelo el VIF de estas se inflaría peligrosamente indicando colinealidad, por eso no está. De la misma manera ocurriría si intentáramos trabajar con la variable semana, que básicamente va a contener una información muy parecida al mes pero aumentando muchísimo el número de parámetros. Lo que sí podemos hacer es juntar algunos de los niveles de la variable "mes".
+
+```{r recodificamos mes, echo=FALSE}
+
+datos$mes<-car::recode(datos$mes, "'08'='09';'07'='06';")
+data_train <- datos[trainIndex,]
+data_test <- datos[-trainIndex,]
+
+modeloManual<-lm(targetCont~mes+HS+Temp.Su+Rn+Desc.Rn+Vviento+Pres+Lluvia+as.numeric(hora),data=data_train)
+summary(modeloManual)
+car::vif(modeloManual)
+Rsq(modeloManual,"targetCont",data_train)
+Rsq(modeloManual,"targetCont",data_test)
+```
+Ahora el modelo está bastante mejor, consigue unos niveles de predicción bastante aceptables sin incurrir en un exceso de parámetros (que solo dependamos de 17 parámetros está genial) y sin presentar niveles altos de colinealidad. Este será el modelo manual que entrará luego en las comparaciones con los demás. En este primer modelo no se han tenido en cuenta interacciones entre variables ni varaibles transformadas.
+
+## Criterios clásicos de elaboración del modelo de regresión lineal.
+
+ Vamos a hacer una transformación de nuestro modelo basándonos en resultados previos. Vamos a introducir las variables hora, día y semana como numéricas (el día es poco significativo, la semana como factor introduce demasiados niveles y posiblemente sea descartada a favor del mes y la hora introduce niveles adicionales y puede que nos funcione como transformada numérica como ya ocurrió en el modelo manual). Extraeremos variables transformadas que linealicen mejor que las originales con la variable target, entre ellas estarán las numéricas de las fechas que acabamos de cambiar de tipo.
+
+```{r transformamos variables, echo=TRUE, results='hide'}
+datos<-readRDS("datos_dep")
+targetCont<-datos$targetCont
+datos$aleatorio<-runif(nrow(datos))
+datos$aleatorio2<-runif(nrow(datos))
+datos$día <- as.numeric(datos$día)
+datos$hora <- as.numeric(datos$hora)
+datos$semana <- as.numeric(datos$semana)
+datos_mod<-cbind(datos,Transf_Auto(Filter(is.numeric, datos),targetCont))
+datos_mod <- datos_mod[,-c(1,17,18,19,20,34,35,36)]
+set.seed(123456)
+trainIndex <- createDataPartition(datos_mod$targetCont, p=0.8, list=FALSE)
+data_train <- datos_mod[trainIndex,]
+data_test <- datos_mod[-trainIndex,]
+```
+
+Las variables con las que trabajaremos ahora serán:
+
+```{r Revisamos datos transformados, echo=FALSE}
+colnames(data_train)
+```
+Vamos a correr nuestros algoritmos con los criterior AIC y BIC de selección de variables:
+
+```{r modelos clásicos reg.lin, echo=TRUE, results='hide'}
+null<-lm(targetCont~1, data=data_train)#Modelo minimo
+full<-lm(targetCont~., data=data_train) # Tenemos en cuenta las variables modificadas.
+
+modeloStepAIC<-step(null, scope=list(lower=null, upper=full), direction="both")
+summary(modeloStepAIC)
+Rsq(modeloStepAIC,"targetCont",data_test)
+modeloStepAIC$rank
+
+modeloStepBIC<-step(null, scope=list(lower=null, upper=full), direction="both",k=log(nrow(data_train)))
+summary(modeloStepBIC)
+Rsq(modeloStepBIC,"targetCont",data_test) 
+modeloStepBIC$rank
+```
+
+Como la pestaña de resultados de este proceso es infame los resumo aquí:
+
+  El criterio AIC elaboró el siguiente modelo: 
+ 
+ targetCont ~ mes + Rn + Pres + raiz4HS + Lluvia + Temp + Desc.Rn + cuartaxdía + sqrtxVviento + HS + hora + expxPres + Temp.Su + raiz4Rn + Vviento + raiz4HR + logxDesc.Rn + HR + día + sqrtxsemana + sqrxTemp + Isolar
+ 
+ Con R.squared = 0.8624 y ajustado = 0.8598. Presenta 33 parámetros.
+ 
+  El criterio BIC elaboró el siguiente modelo:
+ 
+ targetCont ~ mes + Rn + Pres + raiz4HS + Lluvia + Temp + Desc.Rn + cuartaxdía + sqrtxVviento + HS + hora + expxPres + Temp.Su + raiz4Rn + Vviento + raiz4HR + logxDesc.Rn
+ 
+ Con R.squared = 0.8614 y ajustado = 0.8591. Presenta 28 parámetros.
+ 
+Consiguen un buen ajuste pero el número de parámetros es bastante elevado, aparte habría que hacer una limpieza de variable consultando el valor del VIF para cada variable de cada modelo y así salvar problemas de colinealidad.
+
+Se hizo también un análisis de interacciones:
+
+Los resultados obtenidos fueron:
+
+ El criterio AIC elaboró un modelo en el que ninguna interacción tomaba importancia salvo algunas con el mes. Como nuestra cantidad de parámetros es grande no vamos a incluirlas.
+ 
+ Con R.squared = 0.9061 y ajustado = 0.8984. Presenta 132 parámetros.
+ 
+ El criterio BIC elaboró un modelo en el que ninguna interacción tomaba importancia salvo algunas con el mes. Como nuestra cantidad de parámetros es grande no vamos a incluirlas.
+ 
+ Con R.squared = 0.8998 y ajustado = 0.8930. Presenta 111 parámetros.
+ 
+Son demasiados parámetros los que se introducen y las interacciones solo se producían con los diferentes niveles del mes por lo que no serán tenidos en cuenta estos modelos.
+
+## Modelos de selección aleatoria.
+
+Ahora podemos aplicar un proceso de selección aleatoria de modelos en los que se va cambiando la semilla y se generan secuencialmente modelos a partir de submuestras aleatorias dependientes de la semilla de nuestros datos. Generamos 100 modelos y los ordenamos por frecuencia de aparición (en cuanto a las variables que contienen). No se tienen en cuenta interacciones. Nos quedaremos con los 3 modelos más repetidos a lo largo del proceso.
+
+```{r Modelos aleatorios,eval=FALSE, echo = FALSE}
+
+rep<-100
+prop<-0.7
+modelosGenerados<-c()
+for (i in 1:rep){
+  set.seed(12345+i)
+  subsample<-data_train[sample(1:nrow(data_train),prop*nrow(data_train),replace = T),]
+  full<-lm(targetCont~.,data=subsample)
+  null<-lm(targetCont~1,data=subsample)
+  modeloAux<-step(null,scope=list(lower=null,upper=full),direction="both",trace=0,k=log(nrow(subsample)))
+  modelosGenerados<-c(modelosGenerados,paste(sort(unlist(strsplit(as.character(formula(modeloAux))[3]," [+] "))),collapse = "+"))
+}
+freq(modelosGenerados,sort="dec")
+
+```
+
+Los modelos elegidos de la selección aleatoria han sido, después de limpiarlos siguiendo motivos de eliminación de variables por alta colinealidad:
+
+```{r Resultado modelos aleatorios, echo=TRUE, results='hide'}
+modelorand1 <- lm(targetCont~cuartaxdía+Desc.Rn+expxPres+hora+Lluvia+mes+Pres+raiz4HR+raiz4HS+raiz4Rn+Rn+sqrtxVviento+Temp.Su+Vviento, data = data_train)
+
+modelorand2 <- lm(targetCont~cuartaxdía+Desc.Rn+día+expxPres+hora+Lluvia+logxDesc.Rn+mes+Pres+raiz4HR+raiz4HS+raiz4Rn+Rn+sqrtxsemana+sqrtxVviento+Temp.Su+Vviento, data = data_train)
+
+modelorand3 <- lm(targetCont~cuartaxdía+Desc.Rn+día+expxPres+hora+Lluvia+mes+Pres+raiz4HR+raiz4HS+raiz4Rn+Rn+sqrtxsemana+sqrtxVviento+Temp.Su+Vviento, data = data_train)
+
+```
+
+Ahora comparamos nuestros 6 modelos, el manual, AIC, BIC y los 3 mejores aleatorios:
+
+```{r Comparamos modelos finales, echo=TRUE}
+
+total<-c()
+lista <- c("modeloManual", "modelorand1", "modelorand2", "modelorand3", "modeloStepAIC", "modeloStepBIC")
+modelos<-sapply(list(modeloManual, modelorand1, modelorand2, modelorand3, modeloStepAIC, modeloStepBIC),formula)
+for (i in 1:length(modelos)){
+  set.seed(1712)
+  vcr<-train(as.formula(modelos[[i]]), data = data_train,
+             method = "lm",
+             trControl = trainControl(method="repeatedcv", number=5, repeats=20,
+                                      returnResamp="all")
+  )
+  total<-rbind(total,cbind(vcr$resample[,1:2],modelo=rep(paste("Modelo",lista[i]),
+                                                         nrow(vcr$resample))))
+}
+boxplot(Rsquared~modelo,data=total,main="R-Square")
+aggregate(Rsquared~modelo, data = total, mean) #el 5 y el 8 son mejores
+aggregate(Rsquared~modelo, data = total, sd)
+
+length(coef(modeloManual)); length(coef(modelorand1));length(coef(modelorand2));length(coef(modelorand3));length(coef(modeloStepAIC));length(coef(modeloStepBIC))
+
+```
+
+## Selección del mejor modelo.
+
+ Ya que lo que buscamos es un modelo que pueda ser interpretado y por lo tanto deba tener un número aceptable de parámetros (y no incurrir en un gran VIF que nos deforme los coeficientes) mi elección va a ser el modelo aleatorio 1, ya que consigue un ajuste medio de 0.8851 que es bastante elevado y contiene 25 parámetros que es un número aceptable teniendo en cuenta que tenemos una variable (mes) factor con 12 niveles. A continuación vamos a comprobar que no tenemos grandes valores para los VIF (aunque ya lo hicimos antes para este modelo) y veremos si hay algunos niveles del factor que podamos simplificar por baja relevancia para el modelo.
+ 
+```{r Modelo ganador reg.lin, echo=TRUE, results='hide'}
+modelorand1 <- lm(targetCont~cuartaxdía+Desc.Rn+expxPres+hora+Lluvia+mes+Pres+raiz4HR+raiz4HS+raiz4Rn+Rn+sqrtxVviento+Temp.Su+Vviento, data = data_train)
+summary(modelorand1)
+car::vif(modelorand1)
+```
+```{r Depuramos modelo ganador reg.lin, echo=FALSE}
+datos<-readRDS("datos_dep")
+targetCont<-datos$targetCont
+datos$aleatorio<-runif(nrow(datos))
+datos$aleatorio2<-runif(nrow(datos))
+datos$día <- as.numeric(datos$día)
+datos$hora <- as.numeric(datos$hora)
+datos$semana <- as.numeric(datos$semana)
+datos_mod<-cbind(datos,Transf_Auto(Filter(is.numeric, datos),targetCont))
+datos_mod <- datos_mod[,-c(1,17,18,19,20,34,35,36)]
+datos_mod$mes<-car::recode(datos_mod$mes, "'05'='06';'12'='11'")
+set.seed(123456)
+trainIndex <- createDataPartition(datos_mod$targetCont, p=0.8, list=FALSE)
+data_train <- datos_mod[trainIndex,]
+data_test <- datos_mod[-trainIndex,]
+```
+
+```{r Modelo Final Definitivo reg.lin, echo = TRUE}
+
+modelorand1 <- lm(targetCont~cuartaxdía+Desc.Rn+hora+Lluvia+mes+Pres+raiz4HS+Rn+sqrtxVviento+Temp.Su, data = data_train)
+summary(modelorand1)
+car::vif(modelorand1)
+
+```
+Este es mi modelo final para la regresión lineal. Hemos unido algunos niveles de la variable mes que presentaban bajos niveles de importancia para el modelo. También hemos eliminado algunas variables que presentaban algo de colinealidad, como por ejemplo exp.Pres y Pres. Para hacerlo se ha seguido el procedimiento de evaluar el modelo en la ausencia de cada una de ellas alternamente y quedarnos con el modelo que mejores resultados ofrezca (prescindir de la que menos aporte aparentemente al modelo).
+
+La interpretación de nuestros coeficientes sería:
+
+- Un aumento de 1 en la variable sqrtxVviento produce una reducción de 0.892 en TD.
+- Un aumento de 1ºC en Temp.Su produce una reducción de 0.134 en TD.
+- Un aumento de 1bq/m^3 en Rn produce un aumento de 0.091 en TD
+- Un aumento de 1 en la variable HR produce una reducción de 14.56 en TD.
+- Un aumento de 1mB en Pres produce un descenso de 0.214 en TD.
+- Un aumento de 1l/m^2 en Lluvia produce un aumento de 4.248 en TD.
+- Un aumento de una hora medido desde la hora incial del día produce un descenso de 0.045 en TD.
+- Un aumento de 1bq/m^3 en Desc.Rn produce un aumento de 0.047 en TD.
+- Un aumento de 1 en el día desde el primer día del mes produce un aumento de 0.0084 en TD.
+
+  Esta última variable aunque parece infuir en los modelos me temo que sólo se debe a la muestra ya que no soy capaz de darle significado físico.
+
+## Regresión logística.
+
+ Vamos a agilizar un poco el proceso por que disponemos de poco espacio para presentar los resultados. El modelo manual se ha hecho siguiendo procedimientos similares al del modelo lineal, se compusieron varios modelos y se compararon, el mejor modelo fue:
+ 
+ 
+```{r Cargamos datos reg log, include = FALSE}
+
+datos<-readRDS("todo_bin")
+targetBin<-datos$targetBin
+
+datos$aleatorio<-runif(nrow(datos))
+datos$aleatorio2<-runif(nrow(datos))
+
+summary(datos)
+
+```
+
+```{r train reg log, include = FALSE}
+
+set.seed(123456)
+trainIndex <- createDataPartition(datos$targetBin, p=0.8, list=FALSE)
+data_train <- datos[trainIndex,]
+data_test <- datos[-trainIndex,]
+
+```
+
+```{r manual reg log, include = FALSE}
+modeloManual_bin<-glm(targetBin~mes+HS+HR+Rn+Desc.Rn+as.numeric(hora)+Pres+Lluvia,data=data_train, family = binomial)
+summary(modeloManual_bin)
+pseudoR2(modeloManual_bin,data_train,"targetBin")
+pseudoR2(modeloManual_bin,data_test,"targetBin")
+car::vif(modeloManual_bin)
+```
+
+```{r mod manual reg log, echo=TRUE}
+datos$mes<-car::recode(datos$mes, "'02'='03';'05'='06'")
+data_train <- datos[trainIndex,]
+data_test <- datos[-trainIndex,]
+modeloManual_bin<-glm(targetBin~mes+HS+HR+Rn+Desc.Rn+as.numeric(hora)+Vviento+Pres+Lluvia,data=data_train, family = binomial)
+summary(modeloManual_bin)
+pseudoR2(modeloManual_bin,data_train,"targetBin")
+pseudoR2(modeloManual_bin,data_test,"targetBin")
+modeloManual_bin$rank #nÃºmero de parÃ¡metros
+car::vif(modeloManual_bin)
+```
+Hemos juntado algunos de los niveles del factor mes, como curiosidad, tenemos un pseudo R^2 mayor en el conjunto test que en el propio train. El modelo presente 18 parámetros que no está nada mal.
+
+A continuación vamos a mejorar un poco los datos de entrada, elaboramos variables transformadas para ajustar de mejor manera con el target y transformamos definitivamente la hora, la semana y el día a numérico para que puedan ser transformadas de la misma manera de ser necesario. Las variables que han resultado:
+
+```{r var mod reg log, echo = FALSE, warning=FALSE}
+
+datos<-readRDS("datos_dep")
+targetBin<-datos$targetBin
+
+datos$aleatorio<-runif(nrow(datos))
+datos$aleatorio2<-runif(nrow(datos))
+
+datos$día <- as.numeric(datos$día)
+datos$hora <- as.numeric(datos$hora)
+datos$semana <- as.numeric(datos$semana)
+
+datos <- datos[,-c(2,17,18,19)]
+
+datos_mod<-cbind(datos,Transf_Auto(Filter(is.numeric, datos),targetBin))
+
+set.seed(123456)
+trainIndex <- createDataPartition(datos_mod$targetBin, p=0.8, list=FALSE)
+data_train <- datos_mod[trainIndex,]
+data_test <- datos_mod[-trainIndex,]
+
+colnames(data_train)
+```
+
+## Selección de modelos con métodos clásicos:
+
+Al igual que en el apartado anterior vamos a utilizar los criterios AIC y BIC para elaborar modelos progresivos.
+
+```{r AIC BIC reg log, echo = TRUE, eval = FALSE}
+
+null<-glm(targetBin~1, data=data_train, family = binomial)
+full<-glm(targetBin~., data=data_train, family = binomial)
+
+modeloStepAIC_bin<-step(null, scope=list(lower=null, upper=full), direction="both")
+summary(modeloStepAIC_bin)
+pseudoR2(modeloStepAIC_bin,data_train,"targetBin")
+pseudoR2(modeloStepAIC_bin,data_test,"targetBin")
+modeloStepAIC_bin$rank
+
+modeloStepBIC_bin<-step(null, scope=list(lower=null, upper=full), direction="both",k=log(nrow(data_train)))
+summary(modeloStepBIC_bin)
+pseudoR2(modeloStepBIC_bin,data_train,"targetBin")
+pseudoR2(modeloStepBIC_bin,data_test,"targetBin") 
+modeloStepBIC_bin$rank
+```
+Los modelos calculados por los algoritmos son:
+
+AIC:     targetBin ~ mes + raiz4Rn + sqrtxLluvia + raiz4HS + 
+    Temp + sqrxPres + raiz4Desc.Rn + sqrxTemp.Su + Temp.Su + 
+    HS + semana + sqrxhora + sqrxTemp + Rn + Pres + sqrxHR + 
+    Lluvia + sqrxsemana + xIsolar
+    
+Con Pseudo R^2 training 0.7663 y test 0.7686 y con 30 parámetros.
+
+    
+BIC:     targetBin ~ mes + raiz4Rn + sqrtxLluvia + raiz4HS + 
+    Temp + sqrxPres + raiz4Desc.Rn + sqrxTemp.Su + Temp.Su + 
+    HS + semana + sqrxhora + sqrxTemp + Rn + Pres + sqrxHR + 
+    Lluvia + sqrxsemana + xIsolar
+
+Con Pseudo R^2 training 0.7644 y test 0.7693 y con 25 parámetros.
+
+
+```{r modelos AIC BIC reg log, echo=FALSE}
+modeloStepAIC_bin = glm(formula = targetBin ~ mes + raiz4Rn + sqrtxLluvia + raiz4HS + 
+    Temp + sqrxPres + raiz4Desc.Rn + sqrxTemp.Su + Temp.Su + 
+    HS + semana + sqrxhora + sqrxTemp + Rn + Pres + sqrxHR + 
+    Lluvia + sqrxsemana + xIsolar, family = binomial, data = data_train)
+
+modeloStepBIC_bin = glm(formula = targetBin ~ mes + raiz4Rn + sqrtxLluvia + raiz4HS + 
+    Temp + sqrxPres + raiz4Desc.Rn + sqrxTemp.Su + Temp.Su + 
+    HS + semana + sqrxhora + sqrxTemp + Rn, family = binomial, 
+    data = data_train)
+```
+
+Los modelos con interacciones son descartados por la misma razón que en el apartado anterior, son mayormente con los factores del mes y los parámetros se diaparan hasta más de la centena.
+
+## Evaluación de los modelos aleatorios.
+
+Lo hacemos de la siguiente manera, hemos puesto sólo 30 repeticiones por que el tiempo de procesamiento de cada uno de estos modelos es muy superior al de los modelos lineales. Seleccionamos los tres que más se han repetido.
+
+```{r aleat reg log, echo=TRUE, eval = FALSE}
+rep<-30
+prop<-0.7
+modelosGenerados<-c()
+for (i in 1:rep){
+  set.seed(12345+i)
+  subsample<-data_train[sample(1:nrow(data_train),prop*nrow(data_train),replace = T),]
+  full<-glm(targetBin~.,data=subsample, family = binomial)
+  null<-glm(targetBin~1,data=subsample, family = binomial)
+  modeloAux<-step(null,scope=list(lower=null,upper=full),direction="both",trace=0,k=log(nrow(subsample)))
+  modelosGenerados<-c(modelosGenerados,paste(sort(unlist(strsplit(as.character(formula(modeloAux))[3]," [+] "))),collapse = "+"))
+}
+freq(modelosGenerados,sort="dec")
+```
+
+Los más exitosos fueron:
+
+```{r mod aleat reg log, echo=TRUE, warning=FALSE}
+modelorand1_bin = glm(targetBin~HS+mes+raiz4Desc.Rn+raiz4HS+raiz4Rn+sqrtxLluvia+sqrxhora+sqrxPres+sqrxTemp, data = data_train, family = binomial)
+
+modelorand2_bin = glm(targetBin~expxdía+HS+mes+raiz4Desc.Rn+raiz4HS+raiz4Rn+sqrtxLluvia+sqrxhora+sqrxPres+sqrxTemp+sqrxTemp.Su+Temp+Temp.Su, data = data_train, family = binomial)
+
+modelorand3_bin = glm(targetBin~HS+mes+raiz4Desc.Rn+raiz4HS+Rn+semana+sqrtxLluvia+sqrxhora+sqrxHR+sqrxPres+sqrxTemp+sqrxTemp.Su+Temp+Temp.Su , data = data_train, family = binomial)
+```
+
+## Ponemos nuestros mejores modelos a prueba con validación cruzada.
+
+```{r repeatev cv reg log, echo=TRUE, warning=FALSE}
+total<-c()
+lista <- c("modeloManual_bin", "modelorand1_bin", "modelorand2_bin", "modelorand3_bin", "modeloStepAIC_bin", "modeloStepBIC_bin")
+modelos<-sapply(list(modeloManual_bin, modelorand1_bin, modelorand2_bin, modelorand3_bin, modeloStepAIC_bin, modeloStepBIC_bin),formula)
+for (i in 1:length(modelos)){
+  set.seed(1712)
+  vcr<-train(as.formula(modelos[[i]]), data = data_train,
+             method = "glm",
+             trControl = trainControl(method="repeatedcv", number=5, repeats=20,
+                                      returnResamp="all")
+  )
+  total<-rbind(total,cbind(vcr$resample[,1:2],modelo=rep(paste("Modelo",lista[i]),
+                                                         nrow(vcr$resample))))
+}
+```
+
+```{r comparacion reg log, echo=TRUE}
+boxplot(Accuracy~modelo, data = total, main = "Accuracy")
+aggregate(Accuracy~modelo, data = total, mean) #el 5 y el 8 son mejores
+aggregate(Accuracy~modelo, data = total, sd)
+
+length(coef(modeloManual_bin));length(coef(modelorand1_bin));length(coef(modelorand2_bin));length(coef(modelorand3_bin));length(coef(modeloStepAIC_bin));length(coef(modeloStepBIC_bin))
+```
+Mi modelo definitivo elegido proviene de pulir el modelo ModeloStepAIC_bin, es el que mejores predicciones presenta pero tiene muchos parámetros, pero vamos a ver si eliminando variables por motivos de colinealidad y fucionando niveles de factores no significativos podemos reducirlo sustancialmente.
+
+```{r mod def reg log 2, echo=FALSE, results='hide'}
+modeloDefinitivo_bin = glm(targetBin ~ mes + sqrtxLluvia + raiz4HS + sqrxPres + raiz4Desc.Rn + sqrxTemp.Su + sqrxhora + Rn , family = binomial, data = data_train)
+
+summary(modeloDefinitivo_bin)
+pseudoR2(modeloDefinitivo_bin,data_train,"targetBin")
+pseudoR2(modeloDefinitivo_bin,data_test,"targetBin")
+modeloDefinitivo_bin$rank #nÃºmero de parÃ¡metros
+
+car::vif(modeloDefinitivo_bin)
+```
+
+
+```{r mod mod def reg log 2, echo=FALSE, warning=FALSE}
+
+datos<-readRDS("datos_dep")
+targetBin<-datos$targetBin
+
+datos$aleatorio<-runif(nrow(datos))
+datos$aleatorio2<-runif(nrow(datos))
+
+datos$día <- as.numeric(datos$día)
+datos$hora <- as.numeric(datos$hora)
+datos$semana <- as.numeric(datos$semana)
+
+datos$mes<-car::recode(datos$mes, "'02'='03';'06'='05'")
+
+datos <- datos[,-c(2,17,18,19)]
+
+datos_mod<-cbind(datos,Transf_Auto(Filter(is.numeric, datos),targetBin))
+
+set.seed(123456)
+trainIndex <- createDataPartition(datos_mod$targetBin, p=0.8, list=FALSE)
+data_train <- datos_mod[trainIndex,]
+data_test <- datos_mod[-trainIndex,]
+
+modeloDefinitivo_bin = glm(targetBin ~ mes + sqrtxLluvia + raiz4HS + sqrxPres + raiz4Desc.Rn + sqrxTemp.Su + sqrxhora + Rn , family = binomial, data = data_train)
+
+summary(modeloDefinitivo_bin)
+pseudoR2(modeloDefinitivo_bin,data_train,"targetBin")
+pseudoR2(modeloDefinitivo_bin,data_test,"targetBin")
+modeloDefinitivo_bin$rank #nÃºmero de parÃ¡metros
+
+car::vif(modeloDefinitivo_bin)
+```
+
+Este sería nuestro modelo definitivo, donde hemos juntado algunos niveles del factor. Puede que el nivel mes10 no sea significativo pero fusionarlo con otros niveles nos quita bastante ajuste (los R^2 ajustados bajan hasta 0.69-0.70).
+
+## Evaluación del punto de corte.
+
+Una vez tenemos nuestro modelo elegido podemos ver cómo se comporta, recordemos que el modelo logístico dará de salida un valor entre 0 y 1 pero el resultado que queremos realmente es un 0 o un 1, por lo que podemos ajustar el valor a partir del cual colapsa a 1 o si no llega a ese valor, a 0. Podemos ver que hay una distinción muy calra de los dos conjuntos sobre nuestro eje de regresión.
+
+```{r gráfico separación casos 1 y 0, echo=FALSE, warning=FALSE}
+hist_targetbinaria(predict(modeloDefinitivo_bin, newdata=data_test,type="response"),data_test$targetBin,"probabilidad")
+```
+
+Los gráficos de rejilla de Youden y de especificidad que ayudan a elegir el valor de corte de manera óptima se pueden encontrar en la Figura 5 del Anexo. A continuación se van los valores del punto de corte para los que se alcanza el máximo de estos dos gráficos y por lo tanto el máximo en la sensibilidad (capacidad de discernir verdaderos positivos) y la precisión del modelo logístico así como las especificidades, sensibilidades y demás parámetros proporcionados por ese punto de corte.
+
+```{r youden reg log, echo=FALSE, warning=FALSE}
+
+
+
+#sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",0.5,"1")
+#sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",0.75,"1")
+
+## generamos una rejilla de puntos de corte
+posiblesCortes<-seq(0,1,0.01)
+
+rejilla<-data.frame(t(rbind(posiblesCortes,sapply(posiblesCortes,function(x) sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",x,"1")))))
+
+rejilla$Youden<-rejilla$Sensitivity+rejilla$Specificity-1
+#plot(rejilla$posiblesCortes,rejilla$Youden)
+#plot(rejilla$posiblesCortes,rejilla$Accuracy)
+rejilla$posiblesCortes[which.max(rejilla$Youden)]
+rejilla$posiblesCortes[which.max(rejilla$Accuracy)]
+
+#Los comparamos
+sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",0.3,"1")
+sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",0.31,"1")
+```
+
+Podemos observar que el primer punto de corte nos proporcionamás sensibilidad que el segundo pero el segundo más precisión total que el primero. Podríamos elegir a placer con cual hacer las predicciones, cualquiera de los dos va a funcionar bien, pero a la hora de evaluar este tipo de modelos y sus puntos de corte siempre tenemos que identificar las necesidades del modelo (identificar siempre los verdaderos positivos, no tener falsos negativos, no tener falsos positivos, etc...) y elegir en función de estas.
+
+```{r ploteamos la rejilla, echo=FALSE, warning=FALSE, include = FALSE}
+hist_targetbinaria(predict(modeloDefinitivo_bin, newdata=data_test,type="response"),data_test$targetBin,"probabilidad")
+
+
+#sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",0.5,"1")
+#sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",0.75,"1")
+
+## generamos una rejilla de puntos de corte
+posiblesCortes<-seq(0,1,0.01)
+
+rejilla<-data.frame(t(rbind(posiblesCortes,sapply(posiblesCortes,function(x) sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",x,"1")))))
+
+rejilla$Youden<-rejilla$Sensitivity+rejilla$Specificity-1
+plot(rejilla$posiblesCortes,rejilla$Youden)
+plot(rejilla$posiblesCortes,rejilla$Accuracy)
+rejilla$posiblesCortes[which.max(rejilla$Youden)]
+rejilla$posiblesCortes[which.max(rejilla$Accuracy)]
+
+#Los comparamos
+sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",0.3,"1")
+sensEspCorte(modeloDefinitivo_bin,data_test,"targetBin",0.31,"1")
+```
+
+Para finalizar, se muestra la importancia de las variables para nuestro modelo, tras ello una lista de lo que serían los coeficientes beta de la regresión logística que se pueden ver como los coeficientes de la regresión lineal del logit de la variable. LA manera de interpretarlas es que e^(beta) es el odd ratio de presentar el evento frente a no presentarlo, es decir, en el caso de una variable regresora cuantitativa, cuántas veces es más probable presentar el evento por cada aumento de una unidad de esa variable y en el caso de una variable regresora categórica con varios niveles cuántas veces es más probable presentar el evento en caso de estar presente este nivel con respecto al factor de referencia. En el caso de los meses el nivel del factor que se toma como referencia es mes1 (Enero). En lugar de consultar estos betas podemos mirar directamente los odd ratios, donde los ajustados dan directamente e^(beta) y se interpretan como el incremento del ratio entre probabilidad de evento y no evento manteniendo el resto de variables del modelo constantes.
+
+```{r resumen reg log final, echo=FALSE, warning=FALSE}
+
+# Vemos las variables mÃ¡s importantes del modelo ganador
+impVariablesLog(modeloDefinitivo_bin,"targetBin") 
+
+# Vemos los coeficientes del modelo ganador
+coef(modeloDefinitivo_bin)
+
+#Evaluamos la estabilidad del modelo a partir de las diferencias en train y test:
+#pseudoR2(modeloDefinitivo_bin,data_train,"targetBin")
+#pseudoR2(modeloDefinitivo_bin,data_test,"targetBin")
+
+roc(data_train$targetBin, predict(modeloDefinitivo_bin,data_train,type = "response"), direction="<")
+
+roc(data_test$targetBin, predict(modeloDefinitivo_bin,data_test,type = "response"), direction="<")
+
+# Odds ratios
+epiDisplay::logistic.display(modeloDefinitivo_bin)
+
+```
+
+Por ejemplo, tenemos que en el mes 9 el ratio de probabilidades entre presentar pico y no presentarlo se eleva hasta 276.87 tomando el mes 1 como referencia, por lo que el mes 9 actúa como un factor a favor del pico, mientras que el mes 04 sería un mes con unas probabilidades de pico muy inferiores a las de no presentarlo. En cuanto a alguna variable cuantitativa tenemos por ejemplo que por cada unidad de incremento en raiz4Desc.Rn se incrementa el odd ratio de presentar pico frente a no presentarlo en 20.77, por lo que es un factor a favor del pico mientras que la raiz4HS sería el factor protector más fuerte, jugando muy a favor de las probabilidades de no presentar pico de estar presente.Por lo general, si el odd ratio de una variable es 1, es un factor neutro, si está por debajo de la unidad es un factor que se suele llamar "protector" en caso de que el evento 1 sea perjudicial, es decir, que juega a favor del evento 0 y si es superior a la unidad es un factor agravante que juega a favor del evento 1.
